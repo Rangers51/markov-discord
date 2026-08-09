@@ -57,7 +57,11 @@ const rest = new Discord.REST({ version: '10' }).setToken(config.token);
 
 const client = new Discord.Client<true>({
   failIfNotExists: false,
-  intents: [Discord.GatewayIntentBits.GuildMessages, Discord.GatewayIntentBits.Guilds],
+  intents: [
+    Discord.GatewayIntentBits.GuildMessages,
+    Discord.GatewayIntentBits.Guilds,
+    Discord.GatewayIntentBits.MessageContent,
+  ],
   presence: {
     activities: [
       {
