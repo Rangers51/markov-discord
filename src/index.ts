@@ -805,7 +805,8 @@ client.on('messageCreate', async (message) => {
   }
   if (command === null) {
     if (isHumanAuthoredMessage(message)) {
-      if (client.user && message.mentions.has(client.user)) {
+      const mentionsBot = client.user && message.mentions.has(client.user);
+      if (mentionsBot) {
         L.debug('Responding to mention');
         // <@!278354154563567636> how are you doing?
         const startSeed = message.content.replace(/<@!\d+>/g, '').trim();
@@ -817,6 +818,12 @@ client.on('messageCreate', async (message) => {
         L.debug('Listening');
         const markov = await getMarkovByGuildId(message.channel.guildId);
         await markov.addData([messageToData(message)]);
+
+        if (!mentionsBot && Math.random() * 100 < config.responseChance) {
+          L.debug({ responseChance: config.responseChance }, 'Responding randomly');
+          const generatedResponse = await generateResponse(message);
+          await handleResponseMessage(generatedResponse, message);
+        }
       }
     }
   }

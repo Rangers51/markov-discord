@@ -9,6 +9,8 @@ import {
   IsInt,
   IsDefined,
   IsNotEmpty,
+  Min,
+  Max,
 } from 'class-validator';
 
 export enum LogLevel {
@@ -62,6 +64,20 @@ export class AppConfig {
   @IsOptional()
   @IsString()
   slashCommandName = process.env.SLASH_COMMAND_NAME || 'mark';
+
+  /**
+   * The percentage chance that the bot responds to an ordinary human-authored message in a
+   * channel it is listening to. Mentions always receive a response.
+   * @example 10
+   * @default 10
+   * @env RESPONSE_CHANCE
+   */
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  responseChance = process.env.RESPONSE_CHANCE
+    ? parseInt(process.env.RESPONSE_CHANCE, 10)
+    : 10;
 
   /**
    * The activity status shown under the bot's name in the user list
