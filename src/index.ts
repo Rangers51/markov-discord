@@ -951,13 +951,12 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.deferReply();
       const clean = interaction.options.getBoolean('clean') ?? true;
       const trainingJSON = interaction.options.getAttachment('json');
-      const reply = (await interaction.fetchReply()) as Discord.Message; // Must fetch the reply ASAP
 
       if (trainingJSON) {
         const responseMessage = await trainFromAttachmentJson(trainingJSON.url, interaction, clean);
-        // Send a message in reply to the reply to avoid the 15 minute webhook token timeout
-        await reply.reply({ content: responseMessage });
+        await interaction.followUp(responseMessage);
       } else {
+        const reply = (await interaction.fetchReply()) as Discord.Message; // Must fetch the reply ASAP
         const responseMessage = await saveGuildMessageHistory(interaction, clean);
         // Send a message in reply to the reply to avoid the 15 minute webhook token timeout
         await reply.reply({ content: responseMessage });
