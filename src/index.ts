@@ -651,41 +651,49 @@ function helpMessage(): AgnosticReplyOptions {
     })
     .setThumbnail(avatarURL as string)
     .setDescription(
-      `A Markov chain chatbot that speaks based on learned messages from previous chat input.`,
+      `Salamando would like to speak to you. She'll do it at random but if you're desperate for attention you can talk to her too.`,
     )
     .addFields([
       {
         name: `${config.messageCommandPrefix} or /${messageCommand.name}`,
-        value: `Generates a sentence to say based on the chat database. Send your message as TTS to recieve it as TTS.`,
-      },
+        value: `Asks Sally to talk to you, but you have to send her a message too.`,
+      },    
+    // .setDescription(
+    //   `A Markov chain chatbot that speaks based on learned messages from previous chat input.`,
+    // )
+    // .addFields([
+    //   {
+    //     name: `${config.messageCommandPrefix} or /${messageCommand.name}`,
+    //     value: `Generates a sentence to say based on the chat database. Send your message as TTS to recieve it as TTS.`,
+    //   },
 
-      {
-        name: `/${listenChannelCommand.name}`,
-        value: `Add, remove, list, or modify the list of channels the bot listens to.`,
-      },
+      // {
+      //   name: `/${listenChannelCommand.name}`,
+      //   value: `Add, remove, list, or modify the list of channels the bot listens to.`,
+      // },
 
-      {
-        name: `${config.messageCommandPrefix} train or /${trainCommand.name}`,
-        value: `Fetches the maximum amount of previous messages in the listened to text channels. This takes some time.`,
-      },
+      // {
+      //   name: `${config.messageCommandPrefix} train or /${trainCommand.name}`,
+      //   value: `Fetches the maximum amount of previous messages in the listened to text channels. This takes some time.`,
+      // },
 
-      {
-        name: `${config.messageCommandPrefix} invite or /${inviteCommand.name}`,
-        value: `Post this bot's invite URL.`,
-      },
+      // {
+      //   name: `${config.messageCommandPrefix} invite or /${inviteCommand.name}`,
+      //   value: `Post this bot's invite URL.`,
+      // },
 
-      {
-        name: `${config.messageCommandPrefix} debug or /${messageCommand.name} debug: True`,
-        value: `Runs the ${config.messageCommandPrefix} command and follows it up with debug info.`,
-      },
+      // {
+      //   name: `${config.messageCommandPrefix} debug or /${messageCommand.name} debug: True`,
+      //   value: `Runs the ${config.messageCommandPrefix} command and follows it up with debug info.`,
+      // },
 
-      {
-        name: `${config.messageCommandPrefix} tts or /${messageCommand.name} tts: True`,
-        value: `Runs the ${config.messageCommandPrefix} command and reads it with text-to-speech.`,
-      },
+      // {
+      //   name: `${config.messageCommandPrefix} tts or /${messageCommand.name} tts: True`,
+      //   value: `Runs the ${config.messageCommandPrefix} command and reads it with text-to-speech.`,
+      // },
     ])
     .setFooter({
-      text: `${packageJson().name} ${getVersion()} by ${
+      text: `Salamando by Caves of Narshe, based on ${packageJson().name} ${getVersion()} by ${
         (packageJson().author as PackageJsonPerson).name
       }`,
     });
