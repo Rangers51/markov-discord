@@ -19,3 +19,23 @@ export const getVersion = (): string => {
 export const getRandomElement = <T>(array: T[]): T => {
   return array[Math.floor(Math.random() * array.length)];
 };
+
+/**
+ * Splits a string into its constituent words, stripping surrounding punctuation.
+ */
+export const extractWords = (text: string): string[] => {
+  return text
+    .split(/\s+/)
+    .map((word) => word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
+    .filter((word) => word.length > 0);
+};
+
+/**
+ * Case-insensitive whole-word search for any of `words` within `text`.
+ */
+export const containsAnyWord = (text: string, words: string[]): boolean => {
+  return words.some((word) => {
+    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`\\b${escaped}\\b`, 'iu').test(text);
+  });
+};

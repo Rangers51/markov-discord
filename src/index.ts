@@ -4,6 +4,7 @@ import * as Discord from 'discord.js';
 import Markov, {
   MarkovGenerateOptions,
   MarkovConstructorOptions,
+  MarkovResult,
   AddDataProps,
 } from 'markov-strings-db';
 import { DataSource } from 'typeorm';
@@ -25,7 +26,7 @@ import {
   messageCommand,
   trainCommand,
 } from './deploy-commands';
-import { getRandomElement, getVersion, packageJson } from './util';
+import { containsAnyWord, extractWords, getRandomElement, getVersion, packageJson } from './util';
 import ormconfig from './ormconfig';
 
 interface MarkovDataCustom {
@@ -77,14 +78,33 @@ const markovOpts: MarkovConstructorOptions = {
   stateSize: config.stateSize,
 };
 
-const markovGenerateOptions: MarkovGenerateOptions<MarkovDataCustom> = {
-  filter: (result): boolean => {
-    return (
-      result.score >= config.minScore && !result.refs.some((ref) => ref.string === result.string)
-    );
-  },
-  maxTries: config.maxTries,
-};
+function defaultResultFilter(result: MarkovResult<MarkovDataCustom>): boolean {
+  return (
+    result.score >= config.minScore && !result.refs.some((ref) => ref.string === result.string)
+  );
+}
+
+/**
+ * Builds a fresh set of generate options per call. `requiredWords`, when given, forces the
+ * filter to reject any candidate sentence that doesn't contain at least one of those words,
+ * so a triggered response can't drift completely away from what it was triggered by.
+ */
+function buildMarkovGenerateOptions(
+  startSeed?: string,
+  requiredWords?: string[],
+): MarkovGenerateOptions<MarkovDataCustom> {
+  return {
+    maxTries: config.maxTries,
+    startSeed,
+    filter: (result): boolean => {
+      if (!defaultResultFilter(result)) return false;
+      if (requiredWords && requiredWords.length > 0) {
+        return containsAnyWord(result.string, requiredWords);
+      }
+      return true;
+    },
+  };
+}
 
 async function refreshCdnUrl(url: string): Promise<string> {
   // Thank you https://github.com/ShufflePerson/Discord_CDN
@@ -541,6 +561,12 @@ interface GenerateOptions {
   tts?: boolean;
   debug?: boolean;
   startSeed?: string;
+  /**
+   * When set, any generated sentence that doesn't contain at least one of these words
+   * (whole-word, case-insensitive) is rejected, and generation fails rather than
+   * returning an unrelated sentence.
+   */
+  requiredWords?: string[];
 }
 
 /**
@@ -555,7 +581,7 @@ async function generateResponse(
   options?: GenerateOptions,
 ): Promise<GenerateResponse> {
   L.debug({ options }, 'Responding...');
-  const { tts = false, debug = false, startSeed } = options || {};
+  const { tts = false, debug = false, startSeed, requiredWords } = options || {};
   if (!interaction.guildId) {
     L.warn('Received an interaction without a guildId');
     return { error: { content: INVALID_GUILD_MESSAGE } };
@@ -567,8 +593,8 @@ async function generateResponse(
   const markov = await getMarkovByGuildId(interaction.guildId);
 
   try {
-    markovGenerateOptions.startSeed = startSeed;
-    const response = await markov.generate<MarkovDataCustom>(markovGenerateOptions);
+    const generateOptions = buildMarkovGenerateOptions(startSeed, requiredWords);
+    const response = await markov.generate<MarkovDataCustom>(generateOptions);
     L.info({ string: response.string }, 'Generated response text');
     L.debug({ response }, 'Generated response object');
     const messageOpts: AgnosticReplyOptions = {
@@ -612,6 +638,11 @@ async function generateResponse(
     return responseMessages;
   } catch (err) {
     L.error(err);
+    // A required-words trigger (e.g. a mention) that couldn't build a matching chain should
+    // silently not respond, rather than posting a raw error to the channel.
+    if (requiredWords && requiredWords.length > 0) {
+      return {};
+    }
     return {
       error: {
         content: `\n\`\`\`\nERROR: ${err}\n\`\`\``,
@@ -822,8 +853,9 @@ client.on('messageCreate', async (message) => {
       if (mentionsBot) {
         L.debug('Responding to mention');
         // <@!278354154563567636> how are you doing?
-        const startSeed = message.content.replace(/<@!\d+>/g, '').trim();
-        const generatedResponse = await generateResponse(message, { startSeed });
+        const startSeed = message.content.replace(/<@!?\d+>/g, '').trim();
+        const requiredWords = extractWords(startSeed);
+        const generatedResponse = await generateResponse(message, { startSeed, requiredWords });
         await handleResponseMessage(generatedResponse, message);
       }
 
@@ -832,7 +864,9 @@ client.on('messageCreate', async (message) => {
 
         if (!mentionsBot && Math.random() * 100 < config.responseChance) {
           L.debug({ responseChance: config.responseChance }, 'Responding randomly');
-          const generatedResponse = await generateResponse(message);
+          const startSeed = message.content.trim();
+          const requiredWords = extractWords(startSeed);
+          const generatedResponse = await generateResponse(message, { startSeed, requiredWords });
           await handleResponseMessage(generatedResponse, message, config.autoResponseAsReply);
         }
 
