@@ -760,7 +760,7 @@ function inviteMessage(): AgnosticReplyOptions {
 
 async function handleResponseMessage(
   generatedResponse: GenerateResponse,
-  message: Discord.Message,
+  message: Discord.Message<true>,
   asReply = true,
 ): Promise<void> {
   const send = (options: AgnosticReplyOptions) =>
@@ -812,7 +812,7 @@ client.on('error', (m) => L.error(m));
 client.on('messageCreate', async (message) => {
   if (
     !(
-      message.guild &&
+      message.inGuild() &&
       (message.channel instanceof Discord.TextChannel ||
         message.channel instanceof Discord.ThreadChannel)
     )
