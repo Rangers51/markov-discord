@@ -801,11 +801,13 @@ client.on('messageCreate', async (message) => {
     const generatedResponse = await generateResponse(message);
     await handleResponseMessage(generatedResponse, message);
   }
-  if (command === 'tts') {
-    L.debug('Responding to legacy command tts');
-    const generatedResponse = await generateResponse(message, { tts: true });
-    await handleResponseMessage(generatedResponse, message);
-  }
+  // TTS is intentionally disabled. Uncomment this handler and the slash-command option
+  // to re-enable it.
+  // if (command === 'tts') {
+  //   L.debug('Responding to legacy command tts');
+  //   const generatedResponse = await generateResponse(message, { tts: true });
+  //   await handleResponseMessage(generatedResponse, message);
+  // }
   if (command === 'debug') {
     L.debug('Responding to legacy command debug');
     const generatedResponse = await generateResponse(message, { debug: true });
@@ -887,7 +889,9 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.reply(inviteMessage());
     } else if (interaction.commandName === messageCommand.name) {
       await interaction.deferReply();
-      const tts = interaction.options.getBoolean('tts') || false;
+      // TTS is intentionally disabled. Restore this option lookup to re-enable it.
+      const tts = false;
+      // const tts = interaction.options.getBoolean('tts') || false;
       const debug = interaction.options.getBoolean('debug') || false;
       const startSeed = interaction.options.getString('seed')?.trim() || undefined;
       const generatedResponse = await generateResponse(interaction, { tts, debug, startSeed });
