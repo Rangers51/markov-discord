@@ -197,6 +197,21 @@ export class AppConfig {
   minScore = process.env.MIN_SCORE ? parseInt(process.env.MIN_SCORE, 10) : 10;
 
   /**
+   * If true, rejects generated sentences that end on a word which almost always requires a
+   * follow-up word to be grammatical (an article, possessive determiner, conjunction, or
+   * preposition - e.g. "the", "and", "of"). This is a heuristic for filtering out sentences
+   * that look cut off mid-clause, not a real grammar check.
+   *
+   * Since a lot of chat messages end without a clean grammatical stop, enabling this can
+   * significantly reduce how often a response can be generated, especially combined with a
+   * high `minScore` or a required trigger word.
+   * @default false
+   * @env REQUIRE_COMPLETE_SENTENCES
+   */
+  @IsBoolean()
+  requireCompleteSentences = process.env.REQUIRE_COMPLETE_SENTENCES === 'true';
+
+  /**
    * This guild ID should be declared if you want its commands to update immediately during development
    * @example 1234567890
    * @env DEV_GUILD_ID

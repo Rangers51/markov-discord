@@ -26,7 +26,16 @@ import {
   messageCommand,
   trainCommand,
 } from './deploy-commands';
-import { containsAnyWord, extractWords, getRandomElement, getVersion, packageJson } from './util';
+import {
+  containsAnyWord,
+  endsWithDanglingWord,
+  extractWords,
+  findMatchedWords,
+  getRandomElement,
+  getVersion,
+  normalizeSentence,
+  packageJson,
+} from './util';
 import ormconfig from './ormconfig';
 
 interface MarkovDataCustom {
@@ -79,9 +88,10 @@ const markovOpts: MarkovConstructorOptions = {
 };
 
 function defaultResultFilter(result: MarkovResult<MarkovDataCustom>): boolean {
-  return (
-    result.score >= config.minScore && !result.refs.some((ref) => ref.string === result.string)
-  );
+  if (result.score < config.minScore) return false;
+  if (result.refs.some((ref) => ref.string === result.string)) return false;
+  if (config.requireCompleteSentences && endsWithDanglingWord(result.string)) return false;
+  return true;
 }
 
 /**
@@ -597,6 +607,12 @@ async function generateResponse(
     const response = await markov.generate<MarkovDataCustom>(generateOptions);
     L.info({ string: response.string }, 'Generated response text');
     L.debug({ response }, 'Generated response object');
+    const matchedWords = requiredWords?.length
+      ? findMatchedWords(response.string, requiredWords)
+      : undefined;
+    if (matchedWords) {
+      L.info({ matchedWords, requiredWords }, 'Response matched required trigger word(s)');
+    }
     const messageOpts: AgnosticReplyOptions = {
       tts,
       allowedMentions: { repliedUser: false, parse: [] },
@@ -624,14 +640,15 @@ async function generateResponse(
         messageOpts.files = [{ attachment: refreshedUrl }];
       }
     }
-    messageOpts.content = response.string;
+    messageOpts.content = normalizeSentence(response.string);
 
     const responseMessages: GenerateResponse = {
       message: messageOpts,
     };
     if (debug) {
+      const debugPayload = matchedWords ? { ...response, requiredWords, matchedWords } : response;
       responseMessages.debug = {
-        content: `\`\`\`\n${JSON.stringify(response, null, 2)}\n\`\`\``,
+        content: `\`\`\`\n${JSON.stringify(debugPayload, null, 2)}\n\`\`\``,
         allowedMentions: { repliedUser: false, parse: [] },
       };
     }
