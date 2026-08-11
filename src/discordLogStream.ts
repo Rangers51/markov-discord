@@ -46,7 +46,7 @@ class DiscordLogStream {
 
   private client: Discord.Client | undefined;
 
-  private channel: Discord.TextBasedChannel | undefined;
+  private channel: Discord.SendableChannels | undefined;
 
   constructor() {
     const timer = setInterval(() => {
@@ -94,16 +94,16 @@ class DiscordLogStream {
     }
   }
 
-  private async getChannel(): Promise<Discord.TextBasedChannel | undefined> {
+  private async getChannel(): Promise<Discord.SendableChannels | undefined> {
     if (!config.logChannelId || !this.client) return undefined;
     if (this.channel?.id === config.logChannelId) return this.channel;
     try {
       const channel = await this.client.channels.fetch(config.logChannelId);
-      if (channel?.isTextBased()) {
+      if (channel?.isSendable()) {
         this.channel = channel;
         return channel;
       }
-      console.error(`Configured logChannelId ${config.logChannelId} is not a text-based channel`);
+      console.error(`Configured logChannelId ${config.logChannelId} is not a sendable channel`);
     } catch (err) {
       console.error('Failed to fetch configured log channel', err);
     }
