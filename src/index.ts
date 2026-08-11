@@ -863,11 +863,20 @@ client.on('messageCreate', async (message) => {
         L.debug('Listening');
 
         if (!mentionsBot && Math.random() * 100 < config.responseChance) {
-          L.debug({ responseChance: config.responseChance }, 'Responding randomly');
           const startSeed = message.content.trim();
-          const requiredWords = extractWords(startSeed);
-          const generatedResponse = await generateResponse(message, { startSeed, requiredWords });
-          await handleResponseMessage(generatedResponse, message, config.autoResponseAsReply);
+          const requiredWords = extractWords(startSeed).filter(
+            (word) => word.length >= config.autoResponseMinWordLength,
+          );
+          if (requiredWords.length > 0) {
+            L.debug({ responseChance: config.responseChance }, 'Responding randomly');
+            const generatedResponse = await generateResponse(message, {
+              startSeed,
+              requiredWords,
+            });
+            await handleResponseMessage(generatedResponse, message, config.autoResponseAsReply);
+          } else {
+            L.debug('Skipping random response: no word met the minimum trigger length');
+          }
         }
 
         const logContext = {

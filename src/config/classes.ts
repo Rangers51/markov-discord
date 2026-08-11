@@ -90,6 +90,21 @@ export class AppConfig {
   autoResponseAsReply = process.env.AUTO_RESPONSE_AS_REPLY === 'true';
 
   /**
+   * The minimum character length a word from the triggering message must have to be eligible
+   * as one of the required words for a random autoresponse. Shorter words in the message are
+   * ignored when deciding what the response is allowed to contain.
+   * @example 4
+   * @default 5
+   * @env AUTO_RESPONSE_MIN_WORD_LENGTH
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  autoResponseMinWordLength = process.env.AUTO_RESPONSE_MIN_WORD_LENGTH
+    ? parseInt(process.env.AUTO_RESPONSE_MIN_WORD_LENGTH, 10)
+    : 5;
+
+  /**
    * The activity status shown under the bot's name in the user list
    * @example "!mark help" for help
    * @default !mark help
