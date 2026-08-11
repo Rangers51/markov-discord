@@ -912,8 +912,12 @@ client.on('messageCreate', async (message) => {
       if (await isValidChannel(message.channel)) {
         L.debug('Listening');
 
-        if (!mentionsBot && Math.random() * 100 < config.responseChance) {
-          const triggerText = message.content.trim();
+        const triggerText = message.content.trim();
+        if (
+          !mentionsBot &&
+          triggerText.length >= config.autoResponseMinMessageLength &&
+          Math.random() * 100 < config.responseChance
+        ) {
           const requiredWords = extractWords(triggerText).filter(
             (word) => word.length >= config.autoResponseMinWordLength,
           );

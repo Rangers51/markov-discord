@@ -105,6 +105,21 @@ export class AppConfig {
     : 5;
 
   /**
+   * The minimum character length (after trimming whitespace) a message must have to be
+   * eligible for a random autoresponse at all. Messages shorter than this never roll for a
+   * response, regardless of `responseChance`.
+   * @example 10
+   * @default 20
+   * @env AUTO_RESPONSE_MIN_MESSAGE_LENGTH
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  autoResponseMinMessageLength = process.env.AUTO_RESPONSE_MIN_MESSAGE_LENGTH
+    ? parseInt(process.env.AUTO_RESPONSE_MIN_MESSAGE_LENGTH, 10)
+    : 20;
+
+  /**
    * The activity status shown under the bot's name in the user list
    * @example "!mark help" for help
    * @default !mark help
