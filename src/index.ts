@@ -816,14 +816,23 @@ client.on('messageCreate', async (message) => {
 
       if (await isValidChannel(message.channel)) {
         L.debug('Listening');
-        const markov = await getMarkovByGuildId(message.channel.guildId);
-        await markov.addData([messageToData(message)]);
 
         if (!mentionsBot && Math.random() * 100 < config.responseChance) {
           L.debug({ responseChance: config.responseChance }, 'Responding randomly');
           const generatedResponse = await generateResponse(message);
           await handleResponseMessage(generatedResponse, message);
         }
+
+        const logContext = {
+          guildId: message.guildId,
+          channelId: message.channelId,
+          messageId: message.id,
+        };
+        L.debug(logContext, 'Setting up Markov for live learning');
+        const markov = await getMarkovByGuildId(message.channel.guildId);
+        L.debug(logContext, 'Adding watched message to training data');
+        await markov.addData([messageToData(message)]);
+        L.debug(logContext, 'Added watched message to training data');
       }
     }
   }

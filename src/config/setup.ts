@@ -72,6 +72,14 @@ if (errors.length > 0) {
   throw new Error('Invalid config');
 }
 
-L.debug({ config: instanceToPlain(config) });
+L.debug(
+  {
+    configPath: configPath || path.resolve(CONFIG_DIR, `${CONFIG_FILE_NAME}.json`),
+    messageCommandPrefix: config.messageCommandPrefix,
+    slashCommandName: config.slashCommandName,
+    responseChance: config.responseChance,
+  },
+  'Loaded configuration',
+);
 
 export { config };
