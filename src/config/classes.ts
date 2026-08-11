@@ -162,6 +162,28 @@ export class AppConfig {
   logLevel = process.env.LOG_LEVEL || LogLevel.INFO;
 
   /**
+   * A Discord channel ID that the bot's own operational logs should be forwarded to, e.g. a
+   * private channel in your own server. Leave unset to disable log forwarding entirely.
+   * @example 1234567890
+   * @env LOG_CHANNEL_ID
+   */
+  @IsOptional()
+  @IsString()
+  logChannelId = process.env.LOG_CHANNEL_ID;
+
+  /**
+   * The minimum log level that gets forwarded to `logChannelId`. Independent of `logLevel`,
+   * which only controls console output. Set to `silent` to configure a channel but pause
+   * forwarding without unsetting it.
+   * @example warn
+   * @default warn
+   * @env DISCORD_LOG_LEVEL
+   */
+  @IsOptional()
+  @IsEnum(LogLevel)
+  discordLogLevel = process.env.DISCORD_LOG_LEVEL || LogLevel.WARN;
+
+  /**
    * The stateSize is the number of words for each "link" of the generated sentence.
    * 1 will output gibberish sentences without much sense.
    * 2 is a sensible default for most cases.

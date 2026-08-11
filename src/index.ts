@@ -14,6 +14,7 @@ import makeEta from 'simple-eta';
 import formatDistanceToNow from 'date-fns/formatDistanceToNow';
 import addSeconds from 'date-fns/addSeconds';
 import L from './logger';
+import { discordLogStream } from './discordLogStream';
 import { Channel } from './entity/Channel';
 import { Guild } from './entity/Guild';
 import { config } from './config';
@@ -832,6 +833,7 @@ async function handleNoGuild(
 
 client.on('ready', async (readyClient) => {
   L.info({ inviteUrl: generateInviteUrl() }, 'Bot logged in');
+  discordLogStream.attachClient(readyClient);
 
   await deployCommands(readyClient.user.id);
 
