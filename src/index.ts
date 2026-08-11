@@ -655,7 +655,7 @@ function helpMessage(): AgnosticReplyOptions {
     )
     .addFields([
       {
-        name: `${config.messageCommandPrefix} or /${messageCommand.name}`,
+        name: `${config.messageCommandPrefix}`,
         value: `Asks Sally to talk to you, but you have to send her a message too.`,
       },    
     // .setDescription(
