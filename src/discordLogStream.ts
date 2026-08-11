@@ -11,6 +11,8 @@ interface PinoLogRecord {
 const FLUSH_INTERVAL_MS = 2000;
 // Leave headroom under Discord's 2000 char message cap for the surrounding code fence.
 const MAX_MESSAGE_LENGTH = 1900;
+// Blank line between entries so a batch of logs doesn't read as one solid, hard-to-scan block.
+const LINE_SEPARATOR = '\n\n';
 
 function formatRecord(record: PinoLogRecord): string {
   const { level, time, msg, pid, hostname, ...rest } = record;
@@ -24,7 +26,7 @@ function chunkLines(lines: string[], maxLength: number): string[] {
   const chunks: string[] = [];
   let current = '';
   lines.forEach((line) => {
-    const candidate = current ? `${current}\n${line}` : line;
+    const candidate = current ? `${current}${LINE_SEPARATOR}${line}` : line;
     if (candidate.length > maxLength && current) {
       chunks.push(current);
       current = line;
