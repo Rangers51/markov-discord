@@ -150,6 +150,22 @@ async function getRandomGuildEmoji(guildId: string): Promise<Discord.GuildEmoji 
   }
 }
 
+/**
+ * Resolves the configured log channel (see `logChannelId`), if any. Returns undefined if
+ * unconfigured or unfetchable, so callers can gracefully fall back to their default behavior.
+ */
+async function getConfiguredLogChannel(): Promise<Discord.SendableChannels | undefined> {
+  if (!config.logChannelId) return undefined;
+  try {
+    const channel = await client.channels.fetch(config.logChannelId);
+    if (channel?.isSendable()) return channel;
+    L.warn({ logChannelId: config.logChannelId }, 'Configured logChannelId is not sendable');
+  } catch (err) {
+    L.error(err, 'Failed to fetch configured log channel');
+  }
+  return undefined;
+}
+
 // Reused across calls so every message doesn't re-issue a `MarkovRoot` lookup for its guild.
 const markovInstanceCache = new Map<string, Promise<Markov>>();
 
@@ -397,8 +413,14 @@ async function saveGuildMessageHistory(
   const embed = new Discord.EmbedBuilder(embedOptions);
   let progressMessage: Discord.Message;
   const updateMessageData = { content: messageContent, embeds: [embed] };
+  // Only slash-command training (never the legacy in-channel command) can be redirected to the
+  // log channel, so the channel being trained on doesn't see the progress/result at all.
+  const logChannel =
+    interaction instanceof Discord.Message ? undefined : await getConfiguredLogChannel();
   if (interaction instanceof Discord.Message) {
     progressMessage = await interaction.reply(updateMessageData);
+  } else if (logChannel) {
+    progressMessage = await logChannel.send(updateMessageData);
   } else {
     progressMessage = (await interaction.followUp(updateMessageData)) as Discord.Message;
   }
@@ -532,8 +554,17 @@ async function saveGuildMessageHistory(
     }
   }
 
-  L.info({ channelIds }, `Trained from ${messagesCount} past human authored messages.`);
-  return `Trained from ${messagesCount} past human authored messages.`;
+  const resultMessage = `Trained from ${messagesCount} past human authored messages.`;
+  L.info({ channelIds }, resultMessage);
+  if (logChannel) {
+    // The result lives in the same progress message rather than a separate reply, since this
+    // channel is otherwise silent about the run.
+    await progressMessage.edit({
+      content: resultMessage,
+      embeds: [new Discord.EmbedBuilder(embedOptions)],
+    });
+  }
+  return resultMessage;
 }
 
 interface JSONImport {
@@ -1112,13 +1143,23 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
     } else if (interaction.commandName === trainCommand.name) {
-      await interaction.deferReply();
       const clean = interaction.options.getBoolean('clean') ?? true;
       const trainingJSON = interaction.options.getAttachment('json');
+      // Only the live-channel-history path (not the JSON upload path) redirects to the log
+      // channel, and only when one is configured - otherwise this falls back to today's
+      // public-in-channel behavior.
+      const useLogChannel = !trainingJSON && Boolean(config.logChannelId);
+
+      await interaction.deferReply({ ephemeral: useLogChannel });
 
       if (trainingJSON) {
         const responseMessage = await trainFromAttachmentJson(trainingJSON.url, interaction, clean);
         await interaction.followUp(responseMessage);
+      } else if (useLogChannel) {
+        await interaction.editReply({
+          content: `Training started. Progress will be posted in <#${config.logChannelId}>.`,
+        });
+        await saveGuildMessageHistory(interaction, clean);
       } else {
         const reply = (await interaction.fetchReply()) as Discord.Message; // Must fetch the reply ASAP
         const responseMessage = await saveGuildMessageHistory(interaction, clean);
