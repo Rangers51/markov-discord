@@ -7,7 +7,7 @@ import Markov, {
   MarkovResult,
   AddDataProps,
 } from 'markov-strings-db';
-import { DataSource } from 'typeorm';
+import { DataSource, IsNull, Not } from 'typeorm';
 import { MarkovInputData } from 'markov-strings-db/dist/src/entity/MarkovInputData';
 import type { PackageJsonPerson } from 'types-package-json';
 import makeEta from 'simple-eta';
@@ -62,6 +62,11 @@ type AgnosticReplyOptions = Omit<Discord.MessageCreateOptions, 'reply' | 'sticke
 
 const INVALID_PERMISSIONS_MESSAGE = 'You do not have the permissions for this action.';
 const INVALID_GUILD_MESSAGE = 'This action must be performed within a server.';
+
+// Synchronous SQLite calls block the event loop, so a slow DB-bound operation here can delay
+// Discord gateway heartbeats. Anything at or above this is logged as a warning so slow
+// generate()/addData() calls (and the resulting connection hiccups) can be correlated in logs.
+const SLOW_DB_OPERATION_WARN_MS = 1000;
 
 const rest = new Discord.REST({ version: '10' }).setToken(config.token);
 
@@ -124,11 +129,22 @@ async function refreshCdnUrl(url: string): Promise<string> {
   return resp.refreshed_urls[0].refreshed;
 }
 
+// Reused across calls so every message doesn't re-issue a `MarkovRoot` lookup for its guild.
+const markovInstanceCache = new Map<string, Promise<Markov>>();
+
 async function getMarkovByGuildId(guildId: string): Promise<Markov> {
-  const markov = new Markov({ id: guildId, options: { ...markovOpts, id: guildId } });
-  L.trace({ guildId }, 'Setting up markov instance');
-  await markov.setup(); // Connect the markov instance to the DB to assign it an ID
-  return markov;
+  const cached = markovInstanceCache.get(guildId);
+  if (cached) return cached;
+  const setupPromise = (async (): Promise<Markov> => {
+    const markov = new Markov({ id: guildId, options: { ...markovOpts, id: guildId } });
+    L.trace({ guildId }, 'Setting up markov instance');
+    await markov.setup(); // Connect the markov instance to the DB to assign it an ID
+    return markov;
+  })();
+  markovInstanceCache.set(guildId, setupPromise);
+  // Don't leave a failed setup cached - let the next call retry.
+  setupPromise.catch(() => markovInstanceCache.delete(guildId));
+  return setupPromise;
 }
 
 /**
@@ -604,9 +620,17 @@ async function generateResponse(
 
   try {
     const generateOptions = buildMarkovGenerateOptions(startSeed, requiredWords);
+    const generateStart = Date.now();
     const response = await markov.generate<MarkovDataCustom>(generateOptions);
+    const generateDurationMs = Date.now() - generateStart;
     L.info({ string: response.string }, 'Generated response text');
-    L.debug({ response }, 'Generated response object');
+    L.debug({ response, generateDurationMs }, 'Generated response object');
+    if (generateDurationMs >= SLOW_DB_OPERATION_WARN_MS) {
+      L.warn(
+        { generateDurationMs, tries: response.tries },
+        'markov.generate() took a while - this blocks the event loop and can cause gateway lag',
+      );
+    }
     const matchedWords = requiredWords?.length
       ? findMatchedWords(response.string, requiredWords)
       : undefined;
@@ -625,11 +649,14 @@ async function generateResponse(
       const refreshedUrl = await refreshCdnUrl(randomRefAttachment);
       messageOpts.files = [refreshedUrl];
     } else {
+      // Restrict to rows that actually have `custom` set (only ever true for messages with
+      // attachments, per messageToData) before the RANDOM() sort, instead of sorting every
+      // message this guild has ever sent just to usually find nothing.
       const randomMessage = await MarkovInputData.createQueryBuilder<
         MarkovInputData<MarkovDataCustom>
       >('input')
         .leftJoinAndSelect('input.markov', 'markov')
-        .where({ markov: markov.db })
+        .where({ markov: markov.db, custom: Not(IsNull()) })
         .orderBy('RANDOM()')
         .limit(1)
         .getOne();
@@ -904,8 +931,16 @@ client.on('messageCreate', async (message) => {
         L.debug(logContext, 'Setting up Markov for live learning');
         const markov = await getMarkovByGuildId(message.channel.guildId);
         L.debug(logContext, 'Adding watched message to training data');
+        const addDataStart = Date.now();
         await markov.addData([messageToData(message)]);
-        L.debug(logContext, 'Added watched message to training data');
+        const addDataDurationMs = Date.now() - addDataStart;
+        L.debug({ ...logContext, addDataDurationMs }, 'Added watched message to training data');
+        if (addDataDurationMs >= SLOW_DB_OPERATION_WARN_MS) {
+          L.warn(
+            { ...logContext, addDataDurationMs },
+            'markov.addData() took a while - this blocks the event loop and can cause gateway lag',
+          );
+        }
       }
     }
   }
