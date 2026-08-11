@@ -730,10 +730,13 @@ function inviteMessage(): AgnosticReplyOptions {
 async function handleResponseMessage(
   generatedResponse: GenerateResponse,
   message: Discord.Message,
+  asReply = true,
 ): Promise<void> {
-  if (generatedResponse.message) await message.reply(generatedResponse.message);
-  if (generatedResponse.debug) await message.reply(generatedResponse.debug);
-  if (generatedResponse.error) await message.reply(generatedResponse.error);
+  const send = (options: AgnosticReplyOptions) =>
+    asReply ? message.reply(options) : message.channel.send(options);
+  if (generatedResponse.message) await send(generatedResponse.message);
+  if (generatedResponse.debug) await send(generatedResponse.debug);
+  if (generatedResponse.error) await send(generatedResponse.error);
 }
 
 async function handleUnprivileged(
@@ -830,7 +833,7 @@ client.on('messageCreate', async (message) => {
         if (!mentionsBot && Math.random() * 100 < config.responseChance) {
           L.debug({ responseChance: config.responseChance }, 'Responding randomly');
           const generatedResponse = await generateResponse(message);
-          await handleResponseMessage(generatedResponse, message);
+          await handleResponseMessage(generatedResponse, message, config.autoResponseAsReply);
         }
 
         const logContext = {

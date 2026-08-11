@@ -7,6 +7,7 @@ import {
   IsEnum,
   IsArray,
   IsInt,
+  IsBoolean,
   IsDefined,
   IsNotEmpty,
   Min,
@@ -78,6 +79,15 @@ export class AppConfig {
   responseChance = process.env.RESPONSE_CHANCE
     ? parseInt(process.env.RESPONSE_CHANCE, 10)
     : 10;
+
+  /**
+   * Whether random automatic responses should reply to the triggering message instead of
+   * posting normally in the channel.
+   * @default false
+   * @env AUTO_RESPONSE_AS_REPLY
+   */
+  @IsBoolean()
+  autoResponseAsReply = process.env.AUTO_RESPONSE_AS_REPLY === 'true';
 
   /**
    * The activity status shown under the bot's name in the user list

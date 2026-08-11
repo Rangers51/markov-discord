@@ -78,6 +78,7 @@ L.debug(
     messageCommandPrefix: config.messageCommandPrefix,
     slashCommandName: config.slashCommandName,
     responseChance: config.responseChance,
+    autoResponseAsReply: config.autoResponseAsReply,
   },
   'Loaded configuration',
 );
