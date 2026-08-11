@@ -131,6 +131,25 @@ async function refreshCdnUrl(url: string): Promise<string> {
   return resp.refreshed_urls[0].refreshed;
 }
 
+/**
+ * Picks a random custom emoji belonging to the given guild - never a standard Unicode emoji
+ * and never one from another guild. Returns undefined if the guild has none available (e.g. a
+ * fresh server, or all its emoji slots are currently unavailable due to a boost-level drop).
+ */
+async function getRandomGuildEmoji(guildId: string): Promise<Discord.GuildEmoji | undefined> {
+  try {
+    const guild: Discord.Guild =
+      client.guilds.cache.get(guildId) ?? (await client.guilds.fetch(guildId));
+    const emojis: Discord.Collection<string, Discord.GuildEmoji> = await guild.emojis.fetch();
+    const usable = emojis.filter((emoji: Discord.GuildEmoji) => emoji.available !== false).toJSON();
+    if (!usable.length) return undefined;
+    return getRandomElement(usable);
+  } catch (err) {
+    L.error(err, 'Failed to fetch a random guild emoji');
+    return undefined;
+  }
+}
+
 // Reused across calls so every message doesn't re-issue a `MarkovRoot` lookup for its guild.
 const markovInstanceCache = new Map<string, Promise<Markov>>();
 
@@ -670,6 +689,14 @@ async function generateResponse(
       }
     }
     messageOpts.content = normalizeSentence(response.string);
+
+    if (Math.random() * 100 < config.emojiResponseChance) {
+      const emoji = await getRandomGuildEmoji(interaction.guildId);
+      if (emoji) {
+        messageOpts.content = `${messageOpts.content} ${emoji}`;
+        L.debug({ emoji: emoji.toString() }, 'Appended a random guild emoji to the response');
+      }
+    }
 
     const responseMessages: GenerateResponse = {
       message: messageOpts,

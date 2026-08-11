@@ -90,6 +90,22 @@ export class AppConfig {
   autoResponseAsReply = process.env.AUTO_RESPONSE_AS_REPLY === 'true';
 
   /**
+   * The percentage chance that a generated response gets a random custom emoji from the
+   * responding guild appended to the end. Only ever picks from that guild's own custom emojis
+   * (never a standard Unicode emoji or another guild's emoji), and only if it has at least one
+   * available. Defaults to 0 (disabled) since it's a cosmetic opt-in.
+   * @example 15
+   * @default 0
+   * @env EMOJI_RESPONSE_CHANCE
+   */
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  emojiResponseChance = process.env.EMOJI_RESPONSE_CHANCE
+    ? parseInt(process.env.EMOJI_RESPONSE_CHANCE, 10)
+    : 0;
+
+  /**
    * The minimum character length a word from the triggering message must have to be eligible
    * as one of the required words for a random autoresponse. Shorter words in the message are
    * ignored when deciding what the response is allowed to contain.
