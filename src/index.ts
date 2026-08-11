@@ -36,6 +36,7 @@ import {
   getVersion,
   normalizeSentence,
   packageJson,
+  pickRandomSeedWindow,
 } from './util';
 import ormconfig from './ormconfig';
 
@@ -899,8 +900,11 @@ client.on('messageCreate', async (message) => {
       if (mentionsBot) {
         L.debug('Responding to mention');
         // <@!278354154563567636> how are you doing?
-        const startSeed = message.content.replace(/<@!?\d+>/g, '').trim();
-        const requiredWords = extractWords(startSeed);
+        const triggerText = message.content.replace(/<@!?\d+>/g, '').trim();
+        const requiredWords = extractWords(triggerText);
+        // Anchor on a random window of the trigger rather than always its first words, so the
+        // seed doesn't structurally favor whichever required word comes first.
+        const startSeed = pickRandomSeedWindow(triggerText, config.stateSize) ?? triggerText;
         const generatedResponse = await generateResponse(message, { startSeed, requiredWords });
         await handleResponseMessage(generatedResponse, message);
       }
@@ -909,12 +913,13 @@ client.on('messageCreate', async (message) => {
         L.debug('Listening');
 
         if (!mentionsBot && Math.random() * 100 < config.responseChance) {
-          const startSeed = message.content.trim();
-          const requiredWords = extractWords(startSeed).filter(
+          const triggerText = message.content.trim();
+          const requiredWords = extractWords(triggerText).filter(
             (word) => word.length >= config.autoResponseMinWordLength,
           );
           if (requiredWords.length > 0) {
             L.debug({ responseChance: config.responseChance }, 'Responding randomly');
+            const startSeed = pickRandomSeedWindow(triggerText, config.stateSize) ?? triggerText;
             const generatedResponse = await generateResponse(message, {
               startSeed,
               requiredWords,

@@ -50,6 +50,19 @@ export const findMatchedWords = (text: string, words: string[]): string[] => {
 };
 
 /**
+ * Picks a random contiguous `windowSize`-word slice of `text` to use as a chain seed, instead
+ * of always anchoring on the words at the very start. Tokenizes on a plain single space, same
+ * as markov-strings-db's own corpus builder, so the reconstructed window can still exact-match
+ * a stored fragment. Returns undefined if `text` doesn't have enough words to fill a window.
+ */
+export const pickRandomSeedWindow = (text: string, windowSize: number): string | undefined => {
+  const words = text.split(' ').filter((word) => word.length > 0);
+  if (words.length < windowSize) return undefined;
+  const start = Math.floor(Math.random() * (words.length - windowSize + 1));
+  return words.slice(start, start + windowSize).join(' ');
+};
+
+/**
  * Capitalizes the first letter and appends a period if the text doesn't already end with
  * terminal punctuation. Purely cosmetic - never rejects a candidate sentence.
  */
