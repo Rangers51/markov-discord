@@ -626,7 +626,7 @@ async function generateResponse(
     const response = await markov.generate<MarkovDataCustom>(generateOptions);
     const generateDurationMs = Date.now() - generateStart;
     L.info({ string: response.string }, 'Generated response text');
-    L.debug({ response, generateDurationMs }, 'Generated response object');
+    L.info({ response, generateDurationMs }, 'Generated response object');
     if (generateDurationMs >= SLOW_DB_OPERATION_WARN_MS) {
       L.warn(
         { generateDurationMs, tries: response.tries },
