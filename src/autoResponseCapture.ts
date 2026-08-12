@@ -31,13 +31,20 @@ async function ensureCaptureFileDir(filePath: string): Promise<void> {
  * to capture text only.
  */
 export async function captureAutoResponse(entry: AutoResponseCaptureEntry): Promise<void> {
-  if (!config.autoResponseCaptureEnabled) return;
+  L.debug({ entry }, 'captureAutoResponse called');
+  if (!config.autoResponseCaptureEnabled) {
+    L.debug('Skipping autoresponse capture: autoResponseCaptureEnabled is false');
+    return;
+  }
+  const { autoResponseCaptureFilePath } = config;
+  const resolvedPath = path.resolve(autoResponseCaptureFilePath);
   try {
-    const { autoResponseCaptureFilePath } = config;
+    L.debug({ resolvedPath }, 'Ensuring autoresponse capture file directory exists');
     await ensureCaptureFileDir(autoResponseCaptureFilePath);
     const record: AutoResponseCaptureRecord = { ...entry, capturedAt: new Date().toISOString() };
     await fs.appendFile(autoResponseCaptureFilePath, `${JSON.stringify(record)}\n`);
+    L.debug({ resolvedPath, messageId: entry.messageId }, 'Captured autoresponse to file');
   } catch (err) {
-    L.error(err, 'Failed to capture autoresponse to file');
+    L.error({ err, resolvedPath }, 'Failed to capture autoresponse to file');
   }
 }

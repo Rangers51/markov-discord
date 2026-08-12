@@ -1010,6 +1010,14 @@ client.on('messageCreate', async (message) => {
                 // here - the captured text needs to make sense wherever it ends up being used.
                 content: stripCustomEmojis(generatedResponse.message.content),
               });
+            } else {
+              L.debug(
+                {
+                  hasSentMessage: Boolean(sentMessage),
+                  hasContent: Boolean(generatedResponse.message?.content),
+                },
+                'Skipping autoresponse capture: nothing was actually sent',
+              );
             }
           } else {
             L.debug('Skipping random response: no word met the minimum trigger length');
