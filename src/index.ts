@@ -693,14 +693,16 @@ async function generateResponse(
       tts,
       allowedMentions: { repliedUser: false, parse: [] },
     };
-    const attachmentUrls = response.refs
+    const attachmentUrls: string[] = response.refs
       .filter((ref) => ref.custom && 'attachments' in ref.custom)
       .flatMap((ref) => (ref.custom as MarkovDataCustom).attachments);
     if (attachmentUrls.length > 0) {
-      const randomRefAttachment = getRandomElement(attachmentUrls);
-      const refreshedUrl = await refreshCdnUrl(randomRefAttachment);
-      messageOpts.files = [refreshedUrl];
-    } else {
+      if (Math.random() * 100 < config.refAttachmentChance) {
+        const randomRefAttachment = getRandomElement(attachmentUrls);
+        const refreshedUrl = await refreshCdnUrl(randomRefAttachment);
+        messageOpts.files = [refreshedUrl];
+      }
+    } else if (Math.random() * 100 < config.randomAttachmentChance) {
       // Restrict to rows that actually have `custom` set (only ever true for messages with
       // attachments, per messageToData) before the RANDOM() sort, instead of sorting every
       // message this guild has ever sent just to usually find nothing.

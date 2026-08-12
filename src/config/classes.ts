@@ -106,6 +106,37 @@ export class AppConfig {
     : 0;
 
   /**
+   * The percentage chance that a generated response includes an attachment from one of the
+   * actual source messages that chain was built from (i.e. it's contextually related to the
+   * generated text). Defaults to 100 to preserve pre-existing behavior.
+   * @example 50
+   * @default 100
+   * @env REF_ATTACHMENT_CHANCE
+   */
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  refAttachmentChance = process.env.REF_ATTACHMENT_CHANCE
+    ? parseInt(process.env.REF_ATTACHMENT_CHANCE, 10)
+    : 100;
+
+  /**
+   * The percentage chance that a generated response includes an attachment from a totally
+   * unrelated random message elsewhere in the guild's corpus, used only as a fallback when the
+   * response has no contextual attachment of its own (see `refAttachmentChance`). Defaults to
+   * 100 to preserve pre-existing behavior.
+   * @example 25
+   * @default 100
+   * @env RANDOM_ATTACHMENT_CHANCE
+   */
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  randomAttachmentChance = process.env.RANDOM_ATTACHMENT_CHANCE
+    ? parseInt(process.env.RANDOM_ATTACHMENT_CHANCE, 10)
+    : 100;
+
+  /**
    * The minimum character length a word from the triggering message must have to be eligible
    * as one of the required words for a random autoresponse. Shorter words in the message are
    * ignored when deciding what the response is allowed to contain.
