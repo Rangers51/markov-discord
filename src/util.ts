@@ -63,6 +63,15 @@ export const pickRandomSeedWindow = (text: string, windowSize: number): string |
 };
 
 /**
+ * Strips Discord custom emoji tags (`<:name:id>` / animated `<a:name:id>`) from text, collapsing
+ * the surrounding whitespace left behind. Custom emoji only render for members of the guild
+ * that owns them, so they're meaningless (and unrenderable) once the text leaves that guild.
+ */
+export const stripCustomEmojis = (text: string): string => {
+  return text.replace(/\s*<a?:\w+:\d+>\s*/g, ' ').trim();
+};
+
+/**
  * Capitalizes the first letter and appends a period if the text doesn't already end with
  * terminal punctuation. Purely cosmetic - never rejects a candidate sentence.
  */

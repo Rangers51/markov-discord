@@ -167,6 +167,30 @@ export class AppConfig {
     : 20;
 
   /**
+   * Whether every autoresponse the bot actually sends gets captured for later use. The exact
+   * text sent (including any appended custom emoji) is appended as a JSON line to
+   * `autoResponseCaptureFilePath`. Attachments are never captured, even if the response had one.
+   * @default false
+   * @env AUTO_RESPONSE_CAPTURE_ENABLED
+   */
+  @IsBoolean()
+  autoResponseCaptureEnabled = process.env.AUTO_RESPONSE_CAPTURE_ENABLED === 'true';
+
+  /**
+   * File path that captured autoresponses are appended to as JSON lines, one per response.
+   * Only used when `autoResponseCaptureEnabled` is true. Parent directories are created
+   * automatically if they don't already exist.
+   * @example config/autoresponses.jsonl
+   * @default config/autoresponses.jsonl
+   * @env AUTO_RESPONSE_CAPTURE_FILE_PATH
+   */
+  @IsOptional()
+  @IsString()
+  autoResponseCaptureFilePath =
+    process.env.AUTO_RESPONSE_CAPTURE_FILE_PATH ||
+    (process.env.CONFIG_DIR ? `${process.env.CONFIG_DIR}/autoresponses.jsonl` : 'config/autoresponses.jsonl');
+
+  /**
    * The activity status shown under the bot's name in the user list
    * @example "!mark help" for help
    * @default !mark help
