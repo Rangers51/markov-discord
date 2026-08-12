@@ -4,15 +4,17 @@ import * as Discord from 'discord.js';
 import Markov, {
   MarkovGenerateOptions,
   MarkovConstructorOptions,
+  MarkovResult,
   AddDataProps,
 } from 'markov-strings-db';
-import { DataSource } from 'typeorm';
+import { DataSource, IsNull, Not } from 'typeorm';
 import { MarkovInputData } from 'markov-strings-db/dist/src/entity/MarkovInputData';
 import type { PackageJsonPerson } from 'types-package-json';
 import makeEta from 'simple-eta';
 import formatDistanceToNow from 'date-fns/formatDistanceToNow';
 import addSeconds from 'date-fns/addSeconds';
 import L from './logger';
+import { discordLogStream } from './discordLogStream';
 import { Channel } from './entity/Channel';
 import { Guild } from './entity/Guild';
 import { config } from './config';
@@ -25,7 +27,17 @@ import {
   messageCommand,
   trainCommand,
 } from './deploy-commands';
-import { getRandomElement, getVersion, packageJson } from './util';
+import {
+  containsAnyWord,
+  endsWithDanglingWord,
+  extractWords,
+  findMatchedWords,
+  getRandomElement,
+  getVersion,
+  normalizeSentence,
+  packageJson,
+  pickRandomSeedWindow,
+} from './util';
 import ormconfig from './ormconfig';
 
 interface MarkovDataCustom {
@@ -53,11 +65,20 @@ type AgnosticReplyOptions = Omit<Discord.MessageCreateOptions, 'reply' | 'sticke
 const INVALID_PERMISSIONS_MESSAGE = 'You do not have the permissions for this action.';
 const INVALID_GUILD_MESSAGE = 'This action must be performed within a server.';
 
+// Synchronous SQLite calls block the event loop, so a slow DB-bound operation here can delay
+// Discord gateway heartbeats. Anything at or above this is logged as a warning so slow
+// generate()/addData() calls (and the resulting connection hiccups) can be correlated in logs.
+const SLOW_DB_OPERATION_WARN_MS = 1000;
+
 const rest = new Discord.REST({ version: '10' }).setToken(config.token);
 
 const client = new Discord.Client<true>({
   failIfNotExists: false,
-  intents: [Discord.GatewayIntentBits.GuildMessages, Discord.GatewayIntentBits.Guilds],
+  intents: [
+    Discord.GatewayIntentBits.GuildMessages,
+    Discord.GatewayIntentBits.Guilds,
+    Discord.GatewayIntentBits.MessageContent,
+  ],
   presence: {
     activities: [
       {
@@ -73,14 +94,34 @@ const markovOpts: MarkovConstructorOptions = {
   stateSize: config.stateSize,
 };
 
-const markovGenerateOptions: MarkovGenerateOptions<MarkovDataCustom> = {
-  filter: (result): boolean => {
-    return (
-      result.score >= config.minScore && !result.refs.some((ref) => ref.string === result.string)
-    );
-  },
-  maxTries: config.maxTries,
-};
+function defaultResultFilter(result: MarkovResult<MarkovDataCustom>): boolean {
+  if (result.score < config.minScore) return false;
+  if (result.refs.some((ref) => ref.string === result.string)) return false;
+  if (config.requireCompleteSentences && endsWithDanglingWord(result.string)) return false;
+  return true;
+}
+
+/**
+ * Builds a fresh set of generate options per call. `requiredWords`, when given, forces the
+ * filter to reject any candidate sentence that doesn't contain at least one of those words,
+ * so a triggered response can't drift completely away from what it was triggered by.
+ */
+function buildMarkovGenerateOptions(
+  startSeed?: string,
+  requiredWords?: string[],
+): MarkovGenerateOptions<MarkovDataCustom> {
+  return {
+    maxTries: config.maxTries,
+    startSeed,
+    filter: (result): boolean => {
+      if (!defaultResultFilter(result)) return false;
+      if (requiredWords && requiredWords.length > 0) {
+        return containsAnyWord(result.string, requiredWords);
+      }
+      return true;
+    },
+  };
+}
 
 async function refreshCdnUrl(url: string): Promise<string> {
   // Thank you https://github.com/ShufflePerson/Discord_CDN
@@ -90,11 +131,57 @@ async function refreshCdnUrl(url: string): Promise<string> {
   return resp.refreshed_urls[0].refreshed;
 }
 
+/**
+ * Picks a random custom emoji belonging to the given guild - never a standard Unicode emoji
+ * and never one from another guild. Returns undefined if the guild has none available (e.g. a
+ * fresh server, or all its emoji slots are currently unavailable due to a boost-level drop).
+ */
+async function getRandomGuildEmoji(guildId: string): Promise<Discord.GuildEmoji | undefined> {
+  try {
+    const guild: Discord.Guild =
+      client.guilds.cache.get(guildId) ?? (await client.guilds.fetch(guildId));
+    const emojis: Discord.Collection<string, Discord.GuildEmoji> = await guild.emojis.fetch();
+    const usable = emojis.filter((emoji: Discord.GuildEmoji) => emoji.available !== false).toJSON();
+    if (!usable.length) return undefined;
+    return getRandomElement(usable);
+  } catch (err) {
+    L.error(err, 'Failed to fetch a random guild emoji');
+    return undefined;
+  }
+}
+
+/**
+ * Resolves the configured log channel (see `logChannelId`), if any. Returns undefined if
+ * unconfigured or unfetchable, so callers can gracefully fall back to their default behavior.
+ */
+async function getConfiguredLogChannel(): Promise<Discord.SendableChannels | undefined> {
+  if (!config.logChannelId) return undefined;
+  try {
+    const channel = await client.channels.fetch(config.logChannelId);
+    if (channel?.isSendable()) return channel;
+    L.warn({ logChannelId: config.logChannelId }, 'Configured logChannelId is not sendable');
+  } catch (err) {
+    L.error(err, 'Failed to fetch configured log channel');
+  }
+  return undefined;
+}
+
+// Reused across calls so every message doesn't re-issue a `MarkovRoot` lookup for its guild.
+const markovInstanceCache = new Map<string, Promise<Markov>>();
+
 async function getMarkovByGuildId(guildId: string): Promise<Markov> {
-  const markov = new Markov({ id: guildId, options: { ...markovOpts, id: guildId } });
-  L.trace({ guildId }, 'Setting up markov instance');
-  await markov.setup(); // Connect the markov instance to the DB to assign it an ID
-  return markov;
+  const cached = markovInstanceCache.get(guildId);
+  if (cached) return cached;
+  const setupPromise = (async (): Promise<Markov> => {
+    const markov = new Markov({ id: guildId, options: { ...markovOpts, id: guildId } });
+    L.trace({ guildId }, 'Setting up markov instance');
+    await markov.setup(); // Connect the markov instance to the DB to assign it an ID
+    return markov;
+  })();
+  markovInstanceCache.set(guildId, setupPromise);
+  // Don't leave a failed setup cached - let the next call retry.
+  setupPromise.catch(() => markovInstanceCache.delete(guildId));
+  return setupPromise;
 }
 
 /**
@@ -326,8 +413,14 @@ async function saveGuildMessageHistory(
   const embed = new Discord.EmbedBuilder(embedOptions);
   let progressMessage: Discord.Message;
   const updateMessageData = { content: messageContent, embeds: [embed] };
+  // Only slash-command training (never the legacy in-channel command) can be redirected to the
+  // log channel, so the channel being trained on doesn't see the progress/result at all.
+  const logChannel =
+    interaction instanceof Discord.Message ? undefined : await getConfiguredLogChannel();
   if (interaction instanceof Discord.Message) {
     progressMessage = await interaction.reply(updateMessageData);
+  } else if (logChannel) {
+    progressMessage = await logChannel.send(updateMessageData);
   } else {
     progressMessage = (await interaction.followUp(updateMessageData)) as Discord.Message;
   }
@@ -461,8 +554,17 @@ async function saveGuildMessageHistory(
     }
   }
 
-  L.info({ channelIds }, `Trained from ${messagesCount} past human authored messages.`);
-  return `Trained from ${messagesCount} past human authored messages.`;
+  const resultMessage = `Trained from ${messagesCount} past human authored messages.`;
+  L.info({ channelIds }, resultMessage);
+  if (logChannel) {
+    // The result lives in the same progress message rather than a separate reply, since this
+    // channel is otherwise silent about the run.
+    await progressMessage.edit({
+      content: resultMessage,
+      embeds: [new Discord.EmbedBuilder(embedOptions)],
+    });
+  }
+  return resultMessage;
 }
 
 interface JSONImport {
@@ -537,6 +639,12 @@ interface GenerateOptions {
   tts?: boolean;
   debug?: boolean;
   startSeed?: string;
+  /**
+   * When set, any generated sentence that doesn't contain at least one of these words
+   * (whole-word, case-insensitive) is rejected, and generation fails rather than
+   * returning an unrelated sentence.
+   */
+  requiredWords?: string[];
 }
 
 /**
@@ -551,7 +659,7 @@ async function generateResponse(
   options?: GenerateOptions,
 ): Promise<GenerateResponse> {
   L.debug({ options }, 'Responding...');
-  const { tts = false, debug = false, startSeed } = options || {};
+  const { tts = false, debug = false, startSeed, requiredWords } = options || {};
   if (!interaction.guildId) {
     L.warn('Received an interaction without a guildId');
     return { error: { content: INVALID_GUILD_MESSAGE } };
@@ -563,27 +671,46 @@ async function generateResponse(
   const markov = await getMarkovByGuildId(interaction.guildId);
 
   try {
-    markovGenerateOptions.startSeed = startSeed;
-    const response = await markov.generate<MarkovDataCustom>(markovGenerateOptions);
+    const generateOptions = buildMarkovGenerateOptions(startSeed, requiredWords);
+    const generateStart = Date.now();
+    const response = await markov.generate<MarkovDataCustom>(generateOptions);
+    const generateDurationMs = Date.now() - generateStart;
     L.info({ string: response.string }, 'Generated response text');
-    L.debug({ response }, 'Generated response object');
+    L.info({ response, generateDurationMs }, 'Generated response object');
+    if (generateDurationMs >= SLOW_DB_OPERATION_WARN_MS) {
+      L.warn(
+        { generateDurationMs, tries: response.tries },
+        'markov.generate() took a while - this blocks the event loop and can cause gateway lag',
+      );
+    }
+    const matchedWords = requiredWords?.length
+      ? findMatchedWords(response.string, requiredWords)
+      : undefined;
+    if (matchedWords) {
+      L.info({ matchedWords, requiredWords }, 'Response matched required trigger word(s)');
+    }
     const messageOpts: AgnosticReplyOptions = {
       tts,
       allowedMentions: { repliedUser: false, parse: [] },
     };
-    const attachmentUrls = response.refs
+    const attachmentUrls: string[] = response.refs
       .filter((ref) => ref.custom && 'attachments' in ref.custom)
       .flatMap((ref) => (ref.custom as MarkovDataCustom).attachments);
     if (attachmentUrls.length > 0) {
-      const randomRefAttachment = getRandomElement(attachmentUrls);
-      const refreshedUrl = await refreshCdnUrl(randomRefAttachment);
-      messageOpts.files = [refreshedUrl];
-    } else {
+      if (Math.random() * 100 < config.refAttachmentChance) {
+        const randomRefAttachment = getRandomElement(attachmentUrls);
+        const refreshedUrl = await refreshCdnUrl(randomRefAttachment);
+        messageOpts.files = [refreshedUrl];
+      }
+    } else if (Math.random() * 100 < config.randomAttachmentChance) {
+      // Restrict to rows that actually have `custom` set (only ever true for messages with
+      // attachments, per messageToData) before the RANDOM() sort, instead of sorting every
+      // message this guild has ever sent just to usually find nothing.
       const randomMessage = await MarkovInputData.createQueryBuilder<
         MarkovInputData<MarkovDataCustom>
       >('input')
         .leftJoinAndSelect('input.markov', 'markov')
-        .where({ markov: markov.db })
+        .where({ markov: markov.db, custom: Not(IsNull()) })
         .orderBy('RANDOM()')
         .limit(1)
         .getOne();
@@ -594,20 +721,34 @@ async function generateResponse(
         messageOpts.files = [{ attachment: refreshedUrl }];
       }
     }
-    messageOpts.content = response.string;
+    messageOpts.content = normalizeSentence(response.string);
+
+    if (Math.random() * 100 < config.emojiResponseChance) {
+      const emoji = await getRandomGuildEmoji(interaction.guildId);
+      if (emoji) {
+        messageOpts.content = `${messageOpts.content} ${emoji}`;
+        L.debug({ emoji: emoji.toString() }, 'Appended a random guild emoji to the response');
+      }
+    }
 
     const responseMessages: GenerateResponse = {
       message: messageOpts,
     };
     if (debug) {
+      const debugPayload = matchedWords ? { ...response, requiredWords, matchedWords } : response;
       responseMessages.debug = {
-        content: `\`\`\`\n${JSON.stringify(response, null, 2)}\n\`\`\``,
+        content: `\`\`\`\n${JSON.stringify(debugPayload, null, 2)}\n\`\`\``,
         allowedMentions: { repliedUser: false, parse: [] },
       };
     }
     return responseMessages;
   } catch (err) {
     L.error(err);
+    // A required-words trigger (e.g. a mention) that couldn't build a matching chain should
+    // silently not respond, rather than posting a raw error to the channel.
+    if (requiredWords && requiredWords.length > 0) {
+      return {};
+    }
     return {
       error: {
         content: `\n\`\`\`\nERROR: ${err}\n\`\`\``,
@@ -647,41 +788,49 @@ function helpMessage(): AgnosticReplyOptions {
     })
     .setThumbnail(avatarURL as string)
     .setDescription(
-      `A Markov chain chatbot that speaks based on learned messages from previous chat input.`,
+      `Salamando would like to speak to you. She'll do it at random but if you're desperate for attention you can talk to her too.`,
     )
     .addFields([
       {
-        name: `${config.messageCommandPrefix} or /${messageCommand.name}`,
-        value: `Generates a sentence to say based on the chat database. Send your message as TTS to recieve it as TTS.`,
-      },
+        name: `${config.messageCommandPrefix}`,
+        value: `Asks Sally to talk to you, but you have to send her a message too.`,
+      },    
+    // .setDescription(
+    //   `A Markov chain chatbot that speaks based on learned messages from previous chat input.`,
+    // )
+    // .addFields([
+    //   {
+    //     name: `${config.messageCommandPrefix} or /${messageCommand.name}`,
+    //     value: `Generates a sentence to say based on the chat database. Send your message as TTS to recieve it as TTS.`,
+    //   },
 
-      {
-        name: `/${listenChannelCommand.name}`,
-        value: `Add, remove, list, or modify the list of channels the bot listens to.`,
-      },
+      // {
+      //   name: `/${listenChannelCommand.name}`,
+      //   value: `Add, remove, list, or modify the list of channels the bot listens to.`,
+      // },
 
-      {
-        name: `${config.messageCommandPrefix} train or /${trainCommand.name}`,
-        value: `Fetches the maximum amount of previous messages in the listened to text channels. This takes some time.`,
-      },
+      // {
+      //   name: `${config.messageCommandPrefix} train or /${trainCommand.name}`,
+      //   value: `Fetches the maximum amount of previous messages in the listened to text channels. This takes some time.`,
+      // },
 
-      {
-        name: `${config.messageCommandPrefix} invite or /${inviteCommand.name}`,
-        value: `Post this bot's invite URL.`,
-      },
+      // {
+      //   name: `${config.messageCommandPrefix} invite or /${inviteCommand.name}`,
+      //   value: `Post this bot's invite URL.`,
+      // },
 
-      {
-        name: `${config.messageCommandPrefix} debug or /${messageCommand.name} debug: True`,
-        value: `Runs the ${config.messageCommandPrefix} command and follows it up with debug info.`,
-      },
+      // {
+      //   name: `${config.messageCommandPrefix} debug or /${messageCommand.name} debug: True`,
+      //   value: `Runs the ${config.messageCommandPrefix} command and follows it up with debug info.`,
+      // },
 
-      {
-        name: `${config.messageCommandPrefix} tts or /${messageCommand.name} tts: True`,
-        value: `Runs the ${config.messageCommandPrefix} command and reads it with text-to-speech.`,
-      },
+      // {
+      //   name: `${config.messageCommandPrefix} tts or /${messageCommand.name} tts: True`,
+      //   value: `Runs the ${config.messageCommandPrefix} command and reads it with text-to-speech.`,
+      // },
     ])
     .setFooter({
-      text: `${packageJson().name} ${getVersion()} by ${
+      text: `Salamando by Caves of Narshe, based on ${packageJson().name} ${getVersion()} by ${
         (packageJson().author as PackageJsonPerson).name
       }`,
     });
@@ -717,11 +866,14 @@ function inviteMessage(): AgnosticReplyOptions {
 
 async function handleResponseMessage(
   generatedResponse: GenerateResponse,
-  message: Discord.Message,
+  message: Discord.Message<true>,
+  asReply = true,
 ): Promise<void> {
-  if (generatedResponse.message) await message.reply(generatedResponse.message);
-  if (generatedResponse.debug) await message.reply(generatedResponse.debug);
-  if (generatedResponse.error) await message.reply(generatedResponse.error);
+  const send = (options: AgnosticReplyOptions) =>
+    asReply ? message.reply(options) : message.channel.send(options);
+  if (generatedResponse.message) await send(generatedResponse.message);
+  if (generatedResponse.debug) await send(generatedResponse.debug);
+  if (generatedResponse.error) await send(generatedResponse.error);
 }
 
 async function handleUnprivileged(
@@ -742,6 +894,7 @@ async function handleNoGuild(
 
 client.on('ready', async (readyClient) => {
   L.info({ inviteUrl: generateInviteUrl() }, 'Bot logged in');
+  discordLogStream.attachClient(readyClient);
 
   await deployCommands(readyClient.user.id);
 
@@ -766,7 +919,7 @@ client.on('error', (m) => L.error(m));
 client.on('messageCreate', async (message) => {
   if (
     !(
-      message.guild &&
+      message.inGuild() &&
       (message.channel instanceof Discord.TextChannel ||
         message.channel instanceof Discord.ThreadChannel)
     )
@@ -789,11 +942,13 @@ client.on('messageCreate', async (message) => {
     const generatedResponse = await generateResponse(message);
     await handleResponseMessage(generatedResponse, message);
   }
-  if (command === 'tts') {
-    L.debug('Responding to legacy command tts');
-    const generatedResponse = await generateResponse(message, { tts: true });
-    await handleResponseMessage(generatedResponse, message);
-  }
+  // TTS is intentionally disabled. Uncomment this handler and the slash-command option
+  // to re-enable it.
+  // if (command === 'tts') {
+  //   L.debug('Responding to legacy command tts');
+  //   const generatedResponse = await generateResponse(message, { tts: true });
+  //   await handleResponseMessage(generatedResponse, message);
+  // }
   if (command === 'debug') {
     L.debug('Responding to legacy command debug');
     const generatedResponse = await generateResponse(message, { debug: true });
@@ -801,18 +956,62 @@ client.on('messageCreate', async (message) => {
   }
   if (command === null) {
     if (isHumanAuthoredMessage(message)) {
-      if (client.user && message.mentions.has(client.user)) {
+      const mentionsBot = client.user && message.mentions.has(client.user);
+      if (mentionsBot) {
         L.debug('Responding to mention');
         // <@!278354154563567636> how are you doing?
-        const startSeed = message.content.replace(/<@!\d+>/g, '').trim();
-        const generatedResponse = await generateResponse(message, { startSeed });
+        const triggerText = message.content.replace(/<@!?\d+>/g, '').trim();
+        const requiredWords = extractWords(triggerText);
+        // Anchor on a random window of the trigger rather than always its first words, so the
+        // seed doesn't structurally favor whichever required word comes first.
+        const startSeed = pickRandomSeedWindow(triggerText, config.stateSize) ?? triggerText;
+        const generatedResponse = await generateResponse(message, { startSeed, requiredWords });
         await handleResponseMessage(generatedResponse, message);
       }
 
       if (await isValidChannel(message.channel)) {
         L.debug('Listening');
+
+        const triggerText = message.content.trim();
+        if (
+          !mentionsBot &&
+          triggerText.length >= config.autoResponseMinMessageLength &&
+          Math.random() * 100 < config.responseChance
+        ) {
+          const requiredWords = extractWords(triggerText).filter(
+            (word) => word.length >= config.autoResponseMinWordLength,
+          );
+          if (requiredWords.length > 0) {
+            L.debug({ responseChance: config.responseChance }, 'Responding randomly');
+            const startSeed = pickRandomSeedWindow(triggerText, config.stateSize) ?? triggerText;
+            const generatedResponse = await generateResponse(message, {
+              startSeed,
+              requiredWords,
+            });
+            await handleResponseMessage(generatedResponse, message, config.autoResponseAsReply);
+          } else {
+            L.debug('Skipping random response: no word met the minimum trigger length');
+          }
+        }
+
+        const logContext = {
+          guildId: message.guildId,
+          channelId: message.channelId,
+          messageId: message.id,
+        };
+        L.debug(logContext, 'Setting up Markov for live learning');
         const markov = await getMarkovByGuildId(message.channel.guildId);
+        L.debug(logContext, 'Adding watched message to training data');
+        const addDataStart = Date.now();
         await markov.addData([messageToData(message)]);
+        const addDataDurationMs = Date.now() - addDataStart;
+        L.debug({ ...logContext, addDataDurationMs }, 'Added watched message to training data');
+        if (addDataDurationMs >= SLOW_DB_OPERATION_WARN_MS) {
+          L.warn(
+            { ...logContext, addDataDurationMs },
+            'markov.addData() took a while - this blocks the event loop and can cause gateway lag',
+          );
+        }
       }
     }
   }
@@ -859,7 +1058,9 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.reply(inviteMessage());
     } else if (interaction.commandName === messageCommand.name) {
       await interaction.deferReply();
-      const tts = interaction.options.getBoolean('tts') || false;
+      // TTS is intentionally disabled. Restore this option lookup to re-enable it.
+      const tts = false;
+      // const tts = interaction.options.getBoolean('tts') || false;
       const debug = interaction.options.getBoolean('debug') || false;
       const startSeed = interaction.options.getString('seed')?.trim() || undefined;
       const generatedResponse = await generateResponse(interaction, { tts, debug, startSeed });
@@ -944,13 +1145,23 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
     } else if (interaction.commandName === trainCommand.name) {
-      await interaction.deferReply();
       const clean = interaction.options.getBoolean('clean') ?? true;
       const trainingJSON = interaction.options.getAttachment('json');
+      // Only the live-channel-history path (not the JSON upload path) redirects to the log
+      // channel, and only when one is configured - otherwise this falls back to today's
+      // public-in-channel behavior.
+      const useLogChannel = !trainingJSON && Boolean(config.logChannelId);
+
+      await interaction.deferReply({ ephemeral: useLogChannel });
 
       if (trainingJSON) {
         const responseMessage = await trainFromAttachmentJson(trainingJSON.url, interaction, clean);
         await interaction.followUp(responseMessage);
+      } else if (useLogChannel) {
+        await interaction.editReply({
+          content: `Training started. Progress will be posted in <#${config.logChannelId}>.`,
+        });
+        await saveGuildMessageHistory(interaction, clean);
       } else {
         const reply = (await interaction.fetchReply()) as Discord.Message; // Must fetch the reply ASAP
         const responseMessage = await saveGuildMessageHistory(interaction, clean);

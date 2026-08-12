@@ -7,8 +7,11 @@ import {
   IsEnum,
   IsArray,
   IsInt,
+  IsBoolean,
   IsDefined,
   IsNotEmpty,
+  Min,
+  Max,
 } from 'class-validator';
 
 export enum LogLevel {
@@ -62,6 +65,106 @@ export class AppConfig {
   @IsOptional()
   @IsString()
   slashCommandName = process.env.SLASH_COMMAND_NAME || 'mark';
+
+  /**
+   * The percentage chance that the bot responds to an ordinary human-authored message in a
+   * channel it is listening to. Mentions always receive a response.
+   * @example 10
+   * @default 10
+   * @env RESPONSE_CHANCE
+   */
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  responseChance = process.env.RESPONSE_CHANCE
+    ? parseInt(process.env.RESPONSE_CHANCE, 10)
+    : 10;
+
+  /**
+   * Whether random automatic responses should reply to the triggering message instead of
+   * posting normally in the channel.
+   * @default false
+   * @env AUTO_RESPONSE_AS_REPLY
+   */
+  @IsBoolean()
+  autoResponseAsReply = process.env.AUTO_RESPONSE_AS_REPLY === 'true';
+
+  /**
+   * The percentage chance that a generated response gets a random custom emoji from the
+   * responding guild appended to the end. Only ever picks from that guild's own custom emojis
+   * (never a standard Unicode emoji or another guild's emoji), and only if it has at least one
+   * available. Defaults to 0 (disabled) since it's a cosmetic opt-in.
+   * @example 15
+   * @default 0
+   * @env EMOJI_RESPONSE_CHANCE
+   */
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  emojiResponseChance = process.env.EMOJI_RESPONSE_CHANCE
+    ? parseInt(process.env.EMOJI_RESPONSE_CHANCE, 10)
+    : 0;
+
+  /**
+   * The percentage chance that a generated response includes an attachment from one of the
+   * actual source messages that chain was built from (i.e. it's contextually related to the
+   * generated text). Defaults to 100 to preserve pre-existing behavior.
+   * @example 50
+   * @default 100
+   * @env REF_ATTACHMENT_CHANCE
+   */
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  refAttachmentChance = process.env.REF_ATTACHMENT_CHANCE
+    ? parseInt(process.env.REF_ATTACHMENT_CHANCE, 10)
+    : 100;
+
+  /**
+   * The percentage chance that a generated response includes an attachment from a totally
+   * unrelated random message elsewhere in the guild's corpus, used only as a fallback when the
+   * response has no contextual attachment of its own (see `refAttachmentChance`). Defaults to
+   * 100 to preserve pre-existing behavior.
+   * @example 25
+   * @default 100
+   * @env RANDOM_ATTACHMENT_CHANCE
+   */
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  randomAttachmentChance = process.env.RANDOM_ATTACHMENT_CHANCE
+    ? parseInt(process.env.RANDOM_ATTACHMENT_CHANCE, 10)
+    : 100;
+
+  /**
+   * The minimum character length a word from the triggering message must have to be eligible
+   * as one of the required words for a random autoresponse. Shorter words in the message are
+   * ignored when deciding what the response is allowed to contain.
+   * @example 4
+   * @default 5
+   * @env AUTO_RESPONSE_MIN_WORD_LENGTH
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  autoResponseMinWordLength = process.env.AUTO_RESPONSE_MIN_WORD_LENGTH
+    ? parseInt(process.env.AUTO_RESPONSE_MIN_WORD_LENGTH, 10)
+    : 5;
+
+  /**
+   * The minimum character length (after trimming whitespace) a message must have to be
+   * eligible for a random autoresponse at all. Messages shorter than this never roll for a
+   * response, regardless of `responseChance`.
+   * @example 10
+   * @default 20
+   * @env AUTO_RESPONSE_MIN_MESSAGE_LENGTH
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  autoResponseMinMessageLength = process.env.AUTO_RESPONSE_MIN_MESSAGE_LENGTH
+    ? parseInt(process.env.AUTO_RESPONSE_MIN_MESSAGE_LENGTH, 10)
+    : 20;
 
   /**
    * The activity status shown under the bot's name in the user list
@@ -121,6 +224,28 @@ export class AppConfig {
   logLevel = process.env.LOG_LEVEL || LogLevel.INFO;
 
   /**
+   * A Discord channel ID that the bot's own operational logs should be forwarded to, e.g. a
+   * private channel in your own server. Leave unset to disable log forwarding entirely.
+   * @example 1234567890
+   * @env LOG_CHANNEL_ID
+   */
+  @IsOptional()
+  @IsString()
+  logChannelId = process.env.LOG_CHANNEL_ID;
+
+  /**
+   * The minimum log level that gets forwarded to `logChannelId`. Independent of `logLevel`,
+   * which only controls console output. Set to `silent` to configure a channel but pause
+   * forwarding without unsetting it.
+   * @example warn
+   * @default warn
+   * @env DISCORD_LOG_LEVEL
+   */
+  @IsOptional()
+  @IsEnum(LogLevel)
+  discordLogLevel = process.env.DISCORD_LOG_LEVEL || LogLevel.WARN;
+
+  /**
    * The stateSize is the number of words for each "link" of the generated sentence.
    * 1 will output gibberish sentences without much sense.
    * 2 is a sensible default for most cases.
@@ -154,6 +279,21 @@ export class AppConfig {
   @IsOptional()
   @IsInt()
   minScore = process.env.MIN_SCORE ? parseInt(process.env.MIN_SCORE, 10) : 10;
+
+  /**
+   * If true, rejects generated sentences that end on a word which almost always requires a
+   * follow-up word to be grammatical (an article, possessive determiner, conjunction, or
+   * preposition - e.g. "the", "and", "of"). This is a heuristic for filtering out sentences
+   * that look cut off mid-clause, not a real grammar check.
+   *
+   * Since a lot of chat messages end without a clean grammatical stop, enabling this can
+   * significantly reduce how often a response can be generated, especially combined with a
+   * high `minScore` or a required trigger word.
+   * @default false
+   * @env REQUIRE_COMPLETE_SENTENCES
+   */
+  @IsBoolean()
+  requireCompleteSentences = process.env.REQUIRE_COMPLETE_SENTENCES === 'true';
 
   /**
    * This guild ID should be declared if you want its commands to update immediately during development

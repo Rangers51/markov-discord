@@ -2,9 +2,10 @@ import { DataSourceOptions } from 'typeorm';
 import { Channel } from './entity/Channel';
 import { Guild } from './entity/Guild';
 import { CreateTables1640838214672 } from './migration/1640838214672-CreateTables';
+import { AddCorpusEntryMarkovBlockIndex1786470702000 } from './migration/1786470702000-AddCorpusEntryMarkovBlockIndex';
 
 const ENTITIES = [Channel, Guild];
-const MIGRATIONS = [CreateTables1640838214672];
+const MIGRATIONS = [CreateTables1640838214672, AddCorpusEntryMarkovBlockIndex1786470702000];
 // const SUBSCRIBERS = [];
 
 const devConfig: DataSourceOptions = {

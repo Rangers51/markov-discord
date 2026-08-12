@@ -21,9 +21,10 @@ export const inviteCommand = new SlashCommandBuilder()
 export const messageCommand = new SlashCommandBuilder()
   .setName(config.slashCommandName)
   .setDescription('Generate a message from learned past messages')
-  .addBooleanOption((tts) =>
-    tts.setName('tts').setDescription('Read the message via text-to-speech.').setRequired(false),
-  )
+  // TTS is intentionally disabled. Uncomment this option and its handlers to re-enable it.
+  // .addBooleanOption((tts) =>
+  //   tts.setName('tts').setDescription('Read the message via text-to-speech.').setRequired(false),
+  // )
   .addBooleanOption((debug) =>
     debug
       .setName('debug')
