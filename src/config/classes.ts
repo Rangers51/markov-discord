@@ -68,7 +68,8 @@ export class AppConfig {
 
   /**
    * The percentage chance that the bot responds to an ordinary human-authored message in a
-   * channel it is listening to. Mentions always receive a response.
+   * channel it is listening to. Mentions always receive a response, subject to
+   * `mentionCooldownSeconds`.
    * @example 10
    * @default 10
    * @env RESPONSE_CHANCE
@@ -79,6 +80,22 @@ export class AppConfig {
   responseChance = process.env.RESPONSE_CHANCE
     ? parseInt(process.env.RESPONSE_CHANCE, 10)
     : 10;
+
+  /**
+   * The minimum number of seconds a single user must wait between mention-triggered responses,
+   * per guild. Mentions from that user within the cooldown window are silently ignored rather
+   * than queueing up a response - meant to stop the bot being spammed by repeated @-pings.
+   * Defaults to 0 (no cooldown, matches pre-existing behavior).
+   * @example 30
+   * @default 0
+   * @env MENTION_COOLDOWN_SECONDS
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  mentionCooldownSeconds = process.env.MENTION_COOLDOWN_SECONDS
+    ? parseInt(process.env.MENTION_COOLDOWN_SECONDS, 10)
+    : 0;
 
   /**
    * Whether random automatic responses should reply to the triggering message instead of

@@ -168,6 +168,37 @@ async function getConfiguredLogChannel(): Promise<Discord.SendableChannels | und
   return undefined;
 }
 
+// Tracks the last time each user got a mention-triggered response, per guild, so a spammed
+// @-ping doesn't queue up a fresh generateResponse() call every single time.
+const mentionCooldowns = new Map<string, number>();
+
+const MENTION_COOLDOWN_SWEEP_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+// Intentionally not unref()'d: the bot process runs indefinitely anyway (kept alive by the
+// Discord gateway connection), so there's no real benefit to letting this timer be collected.
+setInterval(() => {
+  const cutoff = Date.now() - config.mentionCooldownSeconds * 1000;
+  mentionCooldowns.forEach((lastResponse, key) => {
+    if (lastResponse < cutoff) mentionCooldowns.delete(key);
+  });
+}, MENTION_COOLDOWN_SWEEP_INTERVAL_MS);
+
+/**
+ * Checks (and, if allowed, immediately records) whether a mention from this user in this guild
+ * is outside the configured cooldown window. Recording happens synchronously on the same check
+ * so a burst of near-simultaneous mentions can't all sneak through before the first completes.
+ */
+function shouldRespondToMention(guildId: string, userId: string): boolean {
+  if (config.mentionCooldownSeconds <= 0) return true;
+  const key = `${guildId}:${userId}`;
+  const now = Date.now();
+  const lastResponse = mentionCooldowns.get(key);
+  if (lastResponse !== undefined && now - lastResponse < config.mentionCooldownSeconds * 1000) {
+    return false;
+  }
+  mentionCooldowns.set(key, now);
+  return true;
+}
+
 // Reused across calls so every message doesn't re-issue a `MarkovRoot` lookup for its guild.
 const markovInstanceCache = new Map<string, Promise<Markov>>();
 
@@ -966,15 +997,22 @@ client.on('messageCreate', async (message) => {
     if (isHumanAuthoredMessage(message)) {
       const mentionsBot = client.user && message.mentions.has(client.user);
       if (mentionsBot) {
-        L.debug('Responding to mention');
-        // <@!278354154563567636> how are you doing?
-        const triggerText = message.content.replace(/<@!?\d+>/g, '').trim();
-        const requiredWords = extractWords(triggerText);
-        // Anchor on a random window of the trigger rather than always its first words, so the
-        // seed doesn't structurally favor whichever required word comes first.
-        const startSeed = pickRandomSeedWindow(triggerText, config.stateSize) ?? triggerText;
-        const generatedResponse = await generateResponse(message, { startSeed, requiredWords });
-        await handleResponseMessage(generatedResponse, message);
+        if (!shouldRespondToMention(message.guildId, message.author.id)) {
+          L.debug(
+            { guildId: message.guildId, userId: message.author.id },
+            'Skipping mention: user is on cooldown',
+          );
+        } else {
+          L.debug('Responding to mention');
+          // <@!278354154563567636> how are you doing?
+          const triggerText = message.content.replace(/<@!?\d+>/g, '').trim();
+          const requiredWords = extractWords(triggerText);
+          // Anchor on a random window of the trigger rather than always its first words, so the
+          // seed doesn't structurally favor whichever required word comes first.
+          const startSeed = pickRandomSeedWindow(triggerText, config.stateSize) ?? triggerText;
+          const generatedResponse = await generateResponse(message, { startSeed, requiredWords });
+          await handleResponseMessage(generatedResponse, message);
+        }
       }
 
       if (await isValidChannel(message.channel)) {
