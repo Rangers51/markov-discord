@@ -15,6 +15,7 @@ import formatDistanceToNow from 'date-fns/formatDistanceToNow';
 import addSeconds from 'date-fns/addSeconds';
 import L from './logger';
 import { discordLogStream } from './discordLogStream';
+import { captureAutoResponse } from './autoResponseCapture';
 import { Channel } from './entity/Channel';
 import { Guild } from './entity/Guild';
 import { config } from './config';
@@ -37,6 +38,7 @@ import {
   normalizeSentence,
   packageJson,
   pickRandomSeedWindow,
+  stripCustomEmojis,
 } from './util';
 import ormconfig from './ormconfig';
 
@@ -864,16 +866,22 @@ function inviteMessage(): AgnosticReplyOptions {
   return { embeds: [embed] };
 }
 
+/**
+ * Sends the generated response (and any debug/error text) to Discord, returning the sent
+ * "message" reply specifically (not debug/error) so callers can capture what actually went out.
+ */
 async function handleResponseMessage(
   generatedResponse: GenerateResponse,
   message: Discord.Message<true>,
   asReply = true,
-): Promise<void> {
+): Promise<Discord.Message<true> | undefined> {
   const send = (options: AgnosticReplyOptions) =>
     asReply ? message.reply(options) : message.channel.send(options);
-  if (generatedResponse.message) await send(generatedResponse.message);
+  let sentMessage: Discord.Message<true> | undefined;
+  if (generatedResponse.message) sentMessage = await send(generatedResponse.message);
   if (generatedResponse.debug) await send(generatedResponse.debug);
   if (generatedResponse.error) await send(generatedResponse.error);
+  return sentMessage;
 }
 
 async function handleUnprivileged(
@@ -988,7 +996,29 @@ client.on('messageCreate', async (message) => {
               startSeed,
               requiredWords,
             });
-            await handleResponseMessage(generatedResponse, message, config.autoResponseAsReply);
+            const sentMessage = await handleResponseMessage(
+              generatedResponse,
+              message,
+              config.autoResponseAsReply,
+            );
+            if (sentMessage && generatedResponse.message?.content) {
+              await captureAutoResponse({
+                guildId: message.guildId,
+                channelId: message.channelId,
+                messageId: sentMessage.id,
+                // Custom emoji only render within the guild that owns them, so they're stripped
+                // here - the captured text needs to make sense wherever it ends up being used.
+                content: stripCustomEmojis(generatedResponse.message.content),
+              });
+            } else {
+              L.debug(
+                {
+                  hasSentMessage: Boolean(sentMessage),
+                  hasContent: Boolean(generatedResponse.message?.content),
+                },
+                'Skipping autoresponse capture: nothing was actually sent',
+              );
+            }
           } else {
             L.debug('Skipping random response: no word met the minimum trigger length');
           }
