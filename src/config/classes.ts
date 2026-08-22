@@ -69,7 +69,7 @@ export class AppConfig {
   /**
    * The percentage chance that the bot responds to an ordinary human-authored message in a
    * channel it is listening to. Mentions always receive a response, subject to
-   * `mentionCooldownSeconds`.
+   * `mentionCooldownSeconds`, unless `respondToMentions` is false.
    * @example 10
    * @default 10
    * @env RESPONSE_CHANCE
@@ -80,6 +80,17 @@ export class AppConfig {
   responseChance = process.env.RESPONSE_CHANCE
     ? parseInt(process.env.RESPONSE_CHANCE, 10)
     : 10;
+
+  /**
+   * Whether an @-mention of the bot (including a reply to one of its messages that pings it,
+   * which Discord treats as a mention) should ever generate a response. When false, mentions
+   * and ping-replies are ignored outright - they are not converted into a chance-based random
+   * response either, they simply do nothing.
+   * @default true
+   * @env RESPOND_TO_MENTIONS
+   */
+  @IsBoolean()
+  respondToMentions = process.env.RESPOND_TO_MENTIONS !== 'false';
 
   /**
    * The minimum number of seconds a single user must wait between mention-triggered responses,

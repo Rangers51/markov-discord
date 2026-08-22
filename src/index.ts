@@ -996,7 +996,9 @@ client.on('messageCreate', async (message) => {
   if (command === null) {
     if (isHumanAuthoredMessage(message)) {
       const mentionsBot = client.user && message.mentions.has(client.user);
-      if (mentionsBot) {
+      if (mentionsBot && !config.respondToMentions) {
+        L.debug('Ignoring mention: respondToMentions is false');
+      } else if (mentionsBot) {
         if (!shouldRespondToMention(message.guildId, message.author.id)) {
           L.debug(
             { guildId: message.guildId, userId: message.author.id },
